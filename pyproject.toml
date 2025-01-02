@@ -9,7 +9,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.mypy]
 files = "setup.py"
-python_version = "3.7"
+python_version = "3.9"
 strict = true
 show_error_codes = true
 enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
@@ -42,20 +42,12 @@ manylinux-x86_64-image = "manylinux_2_28"
 [tool.cibuildwheel.linux]
 before-all = [
   "yum install -y perl-IPC-Cmd",
-  "dnf install -y epel-release",
-  "dnf install -y wget tar git gcc-toolset-13* perl flex bison patch autoconf automake libtool",
-  "git clone https://github.com/dingodb/dingo-eureka.git",
-  "cd dingo-eureka",
-  "git submodule sync --recursive",
-  "git submodule update --init --recursive",
-  "mkdir build && cd build",
-  "cmake ..",
-  "make -j 5",
+
 ]
 archs = ["x86_64"]
 
 [tool.ruff]
-target-version = "py37"
+target-version = "py39"
 
 [tool.ruff.lint]
 extend-select = [
