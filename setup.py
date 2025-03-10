@@ -149,4 +149,7 @@ setup(
     zip_safe=False,
     # extras_require={"test": ["pytest>=6.0"]},
     python_requires=">=3.9",
+    license="Apache-2.0",
+    include_package_data=True,
+    package_data={"": ["LICENSE"]}, 
 )

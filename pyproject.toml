@@ -47,6 +47,7 @@ before-all = [
   "dnf install -y wget tar git gcc-toolset-13* perl flex bison patch autoconf automake libtool",
   "pip install --user meson",
   "pip install --user ninja",
+  "pip install pkginfo==1.10.0",
   "export PATH=$HOME/.local/bin:$PATH",
   "git clone https://github.com/dingodb/dingo-eureka.git",
   "cd dingo-eureka",
