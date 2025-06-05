@@ -17,6 +17,7 @@
 
 #include <cstdint>
 
+#include "dingosdk/constant.h"
 #include "dingosdk/document.h"
 #include "dingosdk/types.h"
 #include "glog/logging.h"
@@ -46,13 +47,13 @@ class DocumentTranslater {
       part->mutable_id()->set_parent_entity_id(new_index_id);
       std::string start;
       if (i == 0) {
-        document_codec::EncodeDocumentKey(kDocumentPrefix, part_id, start);
+        document_codec::EncodeDocumentKey(Constant::kClientRaw, part_id, start);
       } else {
-        document_codec::EncodeDocumentKey(kDocumentPrefix, part_id, seperator_ids[i - 1], start);
+        document_codec::EncodeDocumentKey(Constant::kClientRaw, part_id, seperator_ids[i - 1], start);
       }
       part->mutable_range()->set_start_key(start);
       std::string end;
-      document_codec::EncodeDocumentKey(kDocumentPrefix, part_id + 1, end);
+      document_codec::EncodeDocumentKey(Constant::kClientRaw, part_id + 1, end);
       part->mutable_range()->set_end_key(end);
     }
   }  // namespace sdk

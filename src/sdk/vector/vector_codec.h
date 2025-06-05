@@ -18,6 +18,7 @@
 #include <optional>
 
 #include "common/logging.h"
+#include "dingosdk/constant.h"
 #include "glog/logging.h"
 #include "sdk/utils/codec.h"
 #include "serial/schema/long_schema.h"
@@ -25,17 +26,13 @@
 namespace dingodb {
 namespace sdk {
 
-static const char kVectorPrefix = 'r';
-static const uint32_t kVectorKeyMinLenWithPrefix = 9;
-static const uint32_t kVectorKeyMaxLenWithPrefix = 17;
-
 namespace vector_codec {
 
 static void EncodeVectorKey(char prefix, int64_t partition_id, std::string& result) {
   CHECK(prefix != 0) << "Encode vector key failed, prefix is 0, partition_id:[" << partition_id << "]";
 
   // Buf buf(17);
-  Buf buf(kVectorKeyMinLenWithPrefix);
+  Buf buf(Constant::kVectorKeyMinLenWithPrefix);
   buf.Write(prefix);
   buf.WriteLong(partition_id);
   buf.GetBytes(result);
@@ -46,7 +43,7 @@ static void EncodeVectorKey(char prefix, int64_t partition_id, int64_t vector_id
                      << vector_id << "]";
 
   // Buf buf(17);
-  Buf buf(kVectorKeyMaxLenWithPrefix);
+  Buf buf(Constant::kVectorKeyMaxLenWithPrefix);
   buf.Write(prefix);
   buf.WriteLong(partition_id);
   DingoSchema<std::optional<int64_t>>::InternalEncodeKey(&buf, vector_id);
@@ -55,9 +52,9 @@ static void EncodeVectorKey(char prefix, int64_t partition_id, int64_t vector_id
 
 static int64_t DecodeVectorId(const std::string& value) {
   Buf buf(value);
-  if (value.size() >= kVectorKeyMaxLenWithPrefix) {
+  if (value.size() >= Constant::kVectorKeyMaxLenWithPrefix) {
     buf.Skip(9);
-  } else if (value.size() == kVectorKeyMinLenWithPrefix) {
+  } else if (value.size() == Constant::kVectorKeyMinLenWithPrefix) {
     return 0;
   } else {
     DINGO_LOG(FATAL) << "Decode vector id failed, value size is not 9 or >=17, value:["
@@ -72,7 +69,7 @@ static int64_t DecodePartitionId(const std::string& value) {
   Buf buf(value);
 
   // if (value.size() >= 17 || value.size() == 9) {
-  if (value.size() >= kVectorKeyMaxLenWithPrefix || value.size() == kVectorKeyMinLenWithPrefix) {
+  if (value.size() >= Constant::kVectorKeyMaxLenWithPrefix || value.size() == Constant::kVectorKeyMinLenWithPrefix) {
     buf.Skip(1);
   }
 

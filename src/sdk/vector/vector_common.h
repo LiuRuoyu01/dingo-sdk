@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <string>
 
+#include "dingosdk/constant.h"
 #include "dingosdk/types.h"
 #include "dingosdk/vector.h"
 #include "glog/logging.h"
@@ -231,13 +232,13 @@ static void FillRangePartitionRule(pb::meta::PartitionRule* partition_rule, cons
     part->mutable_id()->set_parent_entity_id(new_index_id);
     std::string start;
     if (i == 0) {
-      vector_codec::EncodeVectorKey(kVectorPrefix, part_id, start);
+      vector_codec::EncodeVectorKey(Constant::kClientRaw, part_id, start);
     } else {
-      vector_codec::EncodeVectorKey(kVectorPrefix, part_id, seperator_ids[i - 1], start);
+      vector_codec::EncodeVectorKey(Constant::kClientRaw, part_id, seperator_ids[i - 1], start);
     }
     part->mutable_range()->set_start_key(start);
     std::string end;
-    vector_codec::EncodeVectorKey(kVectorPrefix, part_id + 1, end);
+    vector_codec::EncodeVectorKey(Constant::kClientRaw, part_id + 1, end);
     part->mutable_range()->set_end_key(end);
   }
 }
