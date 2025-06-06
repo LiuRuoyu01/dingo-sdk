@@ -59,6 +59,28 @@ struct StoreOwnMetics {
   }
 };
 
+enum StoreType : uint8_t { kNodeNone, kNodeStore, kNodeIndex, kNodeDocument };
+
+enum RegionType : uint8_t { kRegionNone, kRegionStore, kRegionIndex, kRegionDocument };
+
+struct RegionInfo {
+  int64_t region_id{0};                // region id
+  int64_t epoch{0};                    // region epoch
+  RegionType region_type{kRegionNone};  // region type
+  int64_t leader_store_id{0};          // leader store id
+
+  // todo : add more region info
+};
+
+struct StoreInfo {
+  int64_t store_id{0};              // store id
+  int64_t epoch{0};                 // store epoch
+  StoreType store_type{kNodeNone};  // store type
+  int32_t leader_num_weight{0};     // leader num weight
+
+  // todo : add more store info
+};
+
 }  // namespace sdk
 }  // namespace dingodb
 
