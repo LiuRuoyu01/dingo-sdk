@@ -34,6 +34,7 @@
 #include "sdk/rpc/store_rpc.h"
 #include "sdk/transaction/txn_buffer.h"
 #include "sdk/transaction/txn_common.h"
+#include "sdk/transaction/txn_get_task.h"
 #include "sdk/utils/async_util.h"
 
 namespace dingodb {
@@ -233,68 +234,70 @@ Status Transaction::TxnImpl::LookupRegion(std::string_view start_key, std::strin
 }
 
 Status Transaction::TxnImpl::DoTxnGet(const std::string& key, std::string& value) {
-  auto gen_rpc_func = [&](const RegionPtr& region) -> std::unique_ptr<TxnGetRpc> {
-    auto rpc = std::make_unique<TxnGetRpc>();
+  //   auto gen_rpc_func = [&](const RegionPtr& region) -> std::unique_ptr<TxnGetRpc> {
+  //     auto rpc = std::make_unique<TxnGetRpc>();
 
-    rpc->MutableRequest()->set_start_ts(start_ts_);
-    FillRpcContext(*rpc->MutableRequest()->mutable_context(), region->RegionId(), region->Epoch(),
-                   TransactionIsolation2IsolationLevel(options_.isolation));
+  //     rpc->MutableRequest()->set_start_ts(start_ts_);
+  //     FillRpcContext(*rpc->MutableRequest()->mutable_context(), region->RegionId(), region->Epoch(),
+  //                    TransactionIsolation2IsolationLevel(options_.isolation));
 
-    return std::move(rpc);
-  };
+  //     return std::move(rpc);
+  //   };
 
-  std::unique_ptr<TxnGetRpc> rpc;
-  RegionPtr region;
-  Status status;
-  int retry = 0;
-  do {
-    status = LookupRegion(key, region);
-    if (!status.IsOK()) {
-      break;
-    }
+  //   std::unique_ptr<TxnGetRpc> rpc;
+  //   RegionPtr region;
+  //   Status status;
+  //   int retry = 0;
+  //   do {
+  //     status = LookupRegion(key, region);
+  //     if (!status.IsOK()) {
+  //       break;
+  //     }
 
-    rpc = gen_rpc_func(region);
-    rpc->MutableRequest()->set_key(key);
+  //     rpc = gen_rpc_func(region);
+  //     rpc->MutableRequest()->set_key(key);
 
-    status = LogAndSendRpc(stub_, *rpc, region);
-    if (!status.IsOK()) {
-      // retry
-      if (status.IsIncomplete() && status.Errno() == pb::error::EREGION_VERSION) {
-        continue;
-      }
-      break;
-    }
+  //     status = LogAndSendRpc(stub_, *rpc, region);
+  //     if (!status.IsOK()) {
+  //       // retry
+  //       if (status.IsIncomplete() && status.Errno() == pb::error::EREGION_VERSION) {
+  //         continue;
+  //       }
+  //       break;
+  //     }
 
-    const auto* response = rpc->Response();
-    if (response->has_txn_result()) {
-      status = CheckTxnResultInfo(response->txn_result());
-      if (status.IsTxnLockConflict()) {
-        status = stub_.GetTxnLockResolver()->ResolveLock(response->txn_result().locked(), start_ts_);
-        // retry
-        if (status.ok()) {
-          continue;
-        }
-      }
-    }
+  //     const auto* response = rpc->Response();
+  //     if (response->has_txn_result()) {
+  //       status = CheckTxnResultInfo(response->txn_result());
+  //       if (status.IsTxnLockConflict()) {
+  //         status = stub_.GetTxnLockResolver()->ResolveLock(response->txn_result().locked(), start_ts_);
+  //         // retry
+  //         if (status.ok()) {
+  //           continue;
+  //         }
+  //       }
+  //     }
 
-    break;
+  //     break;
 
-  } while (IsNeedRetry(retry));
+  //   } while (IsNeedRetry(retry));
 
-  if (status.ok()) {
-    const auto* response = rpc->Response();
-    if (response->value().empty()) {
-      status = Status::NotFound(fmt::format("key:{} not found", key));
-    } else {
-      value = response->value();
-    }
+  //   if (status.ok()) {
+  //     const auto* response = rpc->Response();
+  //     if (response->value().empty()) {
+  //       status = Status::NotFound(fmt::format("key:{} not found", key));
+  //     } else {
+  //       value = response->value();
+  //     }
 
-  } else {
-    DINGO_LOG(WARNING) << fmt::format("[sdk.txn.{}] get fail, key({}) retry({}) status({}).", ID(), StringToHex(key),
-                                      retry, status.ToString());
-  }
+  //   } else {
+  //     DINGO_LOG(WARNING) << fmt::format("[sdk.txn.{}] get fail, key({}) retry({}) status({}).", ID(),
+  //     StringToHex(key),
+  //                                       retry, status.ToString());
+  //   }
 
-  return status;
+  TxnGetTask task(stub_, key, value, shared_from_this());
+  return task.Run();
 }
 
 void Transaction::TxnImpl::DoTaskForBatchGet(TxnTask& task) {
@@ -864,10 +867,9 @@ std::unique_ptr<TxnCommitRpc> Transaction::TxnImpl::GenCommitRpc(const RegionPtr
 }
 
 Status Transaction::TxnImpl::ProcessTxnCommitResponse(const TxnCommitResponse* response, bool is_primary) const {
-  DINGO_LOG(DEBUG) << fmt::format("[sdk.txn.{}] commit response, pk({}) response({}).", ID(),
-                                  response->ShortDebugString());
-
   std::string pk = buffer_->GetPrimaryKey();
+  DINGO_LOG(DEBUG) << fmt::format("[sdk.txn.{}] commit response, pk({}) response({}).", ID(), pk,
+                                  response->ShortDebugString());
 
   if (response->has_txn_result()) {
     const auto& txn_result = response->txn_result();

@@ -44,6 +44,8 @@ set(SDK_SRCS
   transaction/txn_impl.cc
   transaction/txn_lock_resolver.cc
   transaction/txn_region_scanner_impl.cc
+  transaction/txn_task.cc
+  transaction/txn_get_task.cc
   vector/vector_client.cc
   vector/vector_index_cache.cc
   vector/vector_index_creator.cc

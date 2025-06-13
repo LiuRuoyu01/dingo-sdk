@@ -114,6 +114,9 @@ class Transaction::TxnImpl : public std::enable_shared_from_this<TxnImpl> {
 
   bool IsOnePc() const { return is_one_pc_; }
 
+  int64_t GetStartTs() const { return start_ts_; }
+  TransactionOptions GetOptions() const { return options_; }
+
   bool TEST_IsInitState() { return state_ == kInit; }                    // NOLINT
   bool TEST_IsActiveState() { return state_ == kActive; }                // NOLINT
   bool TEST_IsRollbackingState() { return state_ == kRollbacking; }      // NOLINT
