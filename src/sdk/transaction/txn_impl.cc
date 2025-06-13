@@ -25,15 +25,17 @@
 #include "dingosdk/client.h"
 #include "dingosdk/status.h"
 #include "fmt/core.h"
-#include "gflags/gflags.h"
 #include "glog/logging.h"
 #include "sdk/common/common.h"
 #include "sdk/common/helper.h"
 #include "sdk/common/param_config.h"
 #include "sdk/region.h"
-#include "sdk/rpc/store_rpc.h"
 #include "sdk/transaction/txn_buffer.h"
 #include "sdk/transaction/txn_common.h"
+#include "sdk/transaction/txn_task/txn_batch_get_task.h"
+#include "sdk/transaction/txn_task/txn_batch_rollback_task.h"
+#include "sdk/transaction/txn_task/txn_get_task.h"
+#include "sdk/transaction/txn_task/txn_prewrite_task.h"
 #include "sdk/utils/async_util.h"
 
 namespace dingodb {
@@ -233,228 +235,233 @@ Status Transaction::TxnImpl::LookupRegion(std::string_view start_key, std::strin
 }
 
 Status Transaction::TxnImpl::DoTxnGet(const std::string& key, std::string& value) {
-  auto gen_rpc_func = [&](const RegionPtr& region, uint64_t resolved_lock) -> std::unique_ptr<TxnGetRpc> {
-    auto rpc = std::make_unique<TxnGetRpc>();
+  //   auto gen_rpc_func = [&](const RegionPtr& region, uint64_t resolved_lock) -> std::unique_ptr<TxnGetRpc> {
+  //     auto rpc = std::make_unique<TxnGetRpc>();
 
-    rpc->MutableRequest()->set_start_ts(start_ts_);
-    FillRpcContext(*rpc->MutableRequest()->mutable_context(), region->RegionId(), region->Epoch(), {resolved_lock},
-                   ToIsolationLevel(options_.isolation));
+  //     rpc->MutableRequest()->set_start_ts(start_ts_);
+  //     FillRpcContext(*rpc->MutableRequest()->mutable_context(), region->RegionId(), region->Epoch(), {resolved_lock},
+  //                    ToIsolationLevel(options_.isolation));
 
-    return std::move(rpc);
-  };
+  //     return std::move(rpc);
+  //   };
 
-  uint64_t resolved_lock = 0;
-  std::unique_ptr<TxnGetRpc> rpc;
-  RegionPtr region;
-  Status status;
-  int retry = 0;
-  do {
-    status = LookupRegion(key, region);
-    if (!status.IsOK()) {
-      break;
-    }
+  //   uint64_t resolved_lock = 0;
+  //   std::unique_ptr<TxnGetRpc> rpc;
+  //   RegionPtr region;
+  //   Status status;
+  //   int retry = 0;
+  //   do {
+  //     status = LookupRegion(key, region);
+  //     if (!status.IsOK()) {
+  //       break;
+  //     }
 
-    rpc = gen_rpc_func(region, resolved_lock);
-    rpc->MutableRequest()->set_key(key);
+  //     rpc = gen_rpc_func(region, resolved_lock);
+  //     rpc->MutableRequest()->set_key(key);
 
-    status = LogAndSendRpc(stub_, *rpc, region);
-    if (!status.IsOK()) {
-      // retry
-      if (status.IsIncomplete() && status.Errno() == pb::error::EREGION_VERSION) {
-        continue;
-      }
-      break;
-    }
+  //     status = LogAndSendRpc(stub_, *rpc, region);
+  //     if (!status.IsOK()) {
+  //       // retry
+  //       if (status.IsIncomplete() && status.Errno() == pb::error::EREGION_VERSION) {
+  //         continue;
+  //       }
+  //       break;
+  //     }
 
-    const auto* response = rpc->Response();
-    if (response->has_txn_result()) {
-      const auto& txn_result = response->txn_result();
-      status = CheckTxnResultInfo(txn_result);
-      if (status.IsTxnLockConflict()) {
-        status = stub_.GetTxnLockResolver()->ResolveLock(txn_result.locked(), start_ts_);
-        // retry
-        if (status.ok()) {
-          continue;
-        } else if (status.IsPushMinCommitTs()) {
-          resolved_lock = txn_result.locked().lock_ts();
-          continue;
-        }
-      }
-    }
+  //     const auto* response = rpc->Response();
+  //     if (response->has_txn_result()) {
+  //       const auto& txn_result = response->txn_result();
+  //       status = CheckTxnResultInfo(txn_result);
+  //       if (status.IsTxnLockConflict()) {
+  //         status = stub_.GetTxnLockResolver()->ResolveLock(txn_result.locked(), start_ts_);
+  //         // retry
+  //         if (status.ok()) {
+  //           continue;
+  //         } else if (status.IsPushMinCommitTs()) {
+  //           resolved_lock = txn_result.locked().lock_ts();
+  //           continue;
+  //         }
+  //       }
+  //     }
 
-    break;
+  //     break;
 
-  } while (IsNeedRetry(retry));
+  //   } while (IsNeedRetry(retry));
 
-  if (status.ok()) {
-    const auto* response = rpc->Response();
-    if (response->value().empty()) {
-      status = Status::NotFound(fmt::format("not found key({})", key));
-    } else {
-      value = response->value();
-    }
+  //   if (status.ok()) {
+  //     const auto* response = rpc->Response();
+  //     if (response->value().empty()) {
+  //       status = Status::NotFound(fmt::format("not found key({})", key));
+  //     } else {
+  //       value = response->value();
+  //     }
 
-  } else {
-    DINGO_LOG(WARNING) << fmt::format("[sdk.txn.{}] get fail, key({}) retry({}) status({}).", ID(), StringToHex(key),
-                                      retry, status.ToString());
-  }
+  //   } else {
+  //     DINGO_LOG(WARNING) << fmt::format("[sdk.txn.{}] get fail, key({}) retry({}) status({}).", ID(),
+  //     StringToHex(key),
+  //                                       retry, status.ToString());
+  //   }
+  //   return status;
 
-  return status;
+  TxnGetTask task(stub_, key, value, shared_from_this());
+  return task.Run();
 }
 
-void Transaction::TxnImpl::DoTaskForBatchGet(TxnTask& task) {
-  CHECK(!task.keys.empty()) << "task keys is empty.";
+// void Transaction::TxnImpl::DoTaskForBatchGet(TxnTask& task) {
+//   CHECK(!task.keys.empty()) << "task keys is empty.";
 
-  auto gen_rpc_func = [&](const RegionPtr& region, uint64_t resolved_lock) -> std::unique_ptr<TxnBatchGetRpc> {
-    auto rpc = std::make_unique<TxnBatchGetRpc>();
+//   auto gen_rpc_func = [&](const RegionPtr& region, uint64_t resolved_lock) -> std::unique_ptr<TxnBatchGetRpc> {
+//     auto rpc = std::make_unique<TxnBatchGetRpc>();
 
-    rpc->MutableRequest()->set_start_ts(start_ts_);
-    FillRpcContext(*rpc->MutableRequest()->mutable_context(), region->RegionId(), region->Epoch(), {resolved_lock},
-                   ToIsolationLevel(options_.isolation));
+//     rpc->MutableRequest()->set_start_ts(start_ts_);
+//     FillRpcContext(*rpc->MutableRequest()->mutable_context(), region->RegionId(), region->Epoch(), {resolved_lock},
+//                    ToIsolationLevel(options_.isolation));
 
-    return std::move(rpc);
-  };
+//     return std::move(rpc);
+//   };
 
-  uint64_t resolved_lock = 0;
-  std::unique_ptr<TxnBatchGetRpc> rpc;
-  auto region = task.region;
-  Status status;
-  int retry = 0;
-  do {
-    rpc = gen_rpc_func(region, resolved_lock);
-    for (const auto& key : task.keys) {
-      *rpc->MutableRequest()->add_keys() = key;
-    }
+//   uint64_t resolved_lock = 0;
+//   std::unique_ptr<TxnBatchGetRpc> rpc;
+//   auto region = task.region;
+//   Status status;
+//   int retry = 0;
+//   do {
+//     rpc = gen_rpc_func(region, resolved_lock);
+//     for (const auto& key : task.keys) {
+//       *rpc->MutableRequest()->add_keys() = key;
+//     }
 
-    status = LogAndSendRpc(stub_, *rpc, region);
-    if (!status.IsOK()) {
-      break;
-    }
+//     status = LogAndSendRpc(stub_, *rpc, region);
+//     if (!status.IsOK()) {
+//       break;
+//     }
 
-    const auto* response = rpc->Response();
-    if (response->has_txn_result()) {
-      const auto& txn_result = response->txn_result();
-      status = CheckTxnResultInfo(txn_result);
-      if (status.IsTxnLockConflict()) {
-        status = stub_.GetTxnLockResolver()->ResolveLock(txn_result.locked(), start_ts_);
-        // retry
-        if (status.ok()) {
-          continue;
-        } else if (status.IsPushMinCommitTs()) {
-          resolved_lock = txn_result.locked().lock_ts();
-          continue;
-        }
-      }
-    }
+//     const auto* response = rpc->Response();
+//     if (response->has_txn_result()) {
+//       const auto& txn_result = response->txn_result();
+//       status = CheckTxnResultInfo(txn_result);
+//       if (status.IsTxnLockConflict()) {
+//         status = stub_.GetTxnLockResolver()->ResolveLock(txn_result.locked(), start_ts_);
+//         // retry
+//         if (status.ok()) {
+//           continue;
+//         } else if (status.IsPushMinCommitTs()) {
+//           resolved_lock = txn_result.locked().lock_ts();
+//           continue;
+//         }
+//       }
+//     }
 
-    break;
+//     break;
 
-  } while (IsNeedRetry(retry));
+//   } while (IsNeedRetry(retry));
 
-  if (status.ok()) {
-    for (const auto& kv : rpc->Response()->kvs()) {
-      if (!kv.value().empty()) {
-        task.result_kvs.push_back({kv.key(), kv.value()});
-      }
-    }
+//   if (status.ok()) {
+//     for (const auto& kv : rpc->Response()->kvs()) {
+//       if (!kv.value().empty()) {
+//         task.result_kvs.push_back({kv.key(), kv.value()});
+//       }
+//     }
 
-  } else {
-    DINGO_LOG(WARNING) << fmt::format("[sdk.txn.{}] batchget fail, key({}) retry({}) status({}).", ID(),
-                                      StringToHex(task.keys[0]), retry, status.ToString());
-  }
+//   } else {
+//     DINGO_LOG(WARNING) << fmt::format("[sdk.txn.{}] batchget fail, key({}) retry({}) status({}).", ID(),
+//                                       StringToHex(task.keys[0]), retry, status.ToString());
+//   }
 
-  task.status = status;
-}
+//   task.status = status;
+// }
 
 // TODO: return not found keys
 Status Transaction::TxnImpl::DoTxnBatchGet(const std::vector<std::string>& keys, std::vector<KVPair>& kvs) {
-  struct RegionEntry {
-    RegionPtr region;
-    std::vector<std::string_view> keys;
-  };
+  //   struct RegionEntry {
+  //     RegionPtr region;
+  //     std::vector<std::string_view> keys;
+  //   };
 
-  std::set<std::string_view> done_keys;
-  // region_id -> region item
-  std::unordered_map<int64_t, RegionEntry> region_entry_map;
-  auto gen_region_entry_func = [&]() -> Status {
-    region_entry_map.clear();
-    for (const auto& key : keys) {
-      if (done_keys.count(key) > 0) {
-        continue;
-      }
+  //   std::set<std::string_view> done_keys;
+  //   // region_id -> region item
+  //   std::unordered_map<int64_t, RegionEntry> region_entry_map;
+  //   auto gen_region_entry_func = [&]() -> Status {
+  //     region_entry_map.clear();
+  //     for (const auto& key : keys) {
+  //       if (done_keys.count(key) > 0) {
+  //         continue;
+  //       }
 
-      RegionPtr region;
-      auto status = LookupRegion(key, region);
-      if (!status.IsOK()) {
-        return status;
-      }
+  //       RegionPtr region;
+  //       auto status = LookupRegion(key, region);
+  //       if (!status.IsOK()) {
+  //         return status;
+  //       }
 
-      auto it = region_entry_map.find(region->RegionId());
-      if (it == region_entry_map.end()) {
-        region_entry_map.emplace(std::make_pair(region->RegionId(), RegionEntry{region, {key}}));
-      } else {
-        it->second.keys.push_back(key);
-      }
-    }
+  //       auto it = region_entry_map.find(region->RegionId());
+  //       if (it == region_entry_map.end()) {
+  //         region_entry_map.emplace(std::make_pair(region->RegionId(), RegionEntry{region, {key}}));
+  //       } else {
+  //         it->second.keys.push_back(key);
+  //       }
+  //     }
 
-    return Status::OK();
-  };
+  //     return Status::OK();
+  //   };
 
-  std::vector<KVPair> result_kvs;
-  result_kvs.reserve(keys.size());
-  Status status;
-  int retry = 0;
-  do {
-    status = gen_region_entry_func();
-    if (!status.IsOK()) {
-      break;
-    }
+  //   std::vector<KVPair> result_kvs;
+  //   result_kvs.reserve(keys.size());
+  //   Status status;
+  //   int retry = 0;
+  //   do {
+  //     status = gen_region_entry_func();
+  //     if (!status.IsOK()) {
+  //       break;
+  //     }
 
-    std::vector<TxnTask> tasks;
-    tasks.reserve(region_entry_map.size());
-    for (const auto& [_, entry] : region_entry_map) {
-      tasks.emplace_back(entry.keys, entry.region);
-    }
+  //     std::vector<TxnTask> tasks;
+  //     tasks.reserve(region_entry_map.size());
+  //     for (const auto& [_, entry] : region_entry_map) {
+  //       tasks.emplace_back(entry.keys, entry.region);
+  //     }
 
-    // parallel execute sub task
-    ParallelExecutor::Execute(tasks.size(),
-                              [&tasks, this](uint32_t i) { Transaction::TxnImpl::DoTaskForBatchGet(tasks[i]); });
+  //     // parallel execute sub task
+  //     ParallelExecutor::Execute(tasks.size(),
+  //                               [&tasks, this](uint32_t i) { Transaction::TxnImpl::DoTaskForBatchGet(tasks[i]); });
 
-    bool need_retry = false;
-    for (auto& task : tasks) {
-      if (task.status.IsOK()) {
-        for (const auto& key : task.keys) done_keys.insert(key);
-        result_kvs.insert(result_kvs.end(), std::make_move_iterator(task.result_kvs.begin()),
-                          std::make_move_iterator(task.result_kvs.end()));
-        continue;
-      }
+  //     bool need_retry = false;
+  //     for (auto& task : tasks) {
+  //       if (task.status.IsOK()) {
+  //         for (const auto& key : task.keys) done_keys.insert(key);
+  //         result_kvs.insert(result_kvs.end(), std::make_move_iterator(task.result_kvs.begin()),
+  //                           std::make_move_iterator(task.result_kvs.end()));
+  //         continue;
+  //       }
 
-      if (status.ok()) status = task.status;
+  //       if (status.ok()) status = task.status;
 
-      if (task.status.IsIncomplete() && task.status.Errno() == pb::error::EREGION_VERSION) {
-        need_retry = true;
-      } else {
-        need_retry = false;
-        status = task.status;
-        break;
-      }
-    }
+  //       if (task.status.IsIncomplete() && task.status.Errno() == pb::error::EREGION_VERSION) {
+  //         need_retry = true;
+  //       } else {
+  //         need_retry = false;
+  //         status = task.status;
+  //         break;
+  //       }
+  //     }
 
-    if (need_retry) continue;
+  //     if (need_retry) continue;
 
-    break;
+  //     break;
 
-  } while (IsNeedRetry(retry));
+  //   } while (IsNeedRetry(retry));
 
-  if (status.IsOK()) {
-    kvs = std::move(result_kvs);
+  //   if (status.IsOK()) {
+  //     kvs = std::move(result_kvs);
 
-  } else {
-    DINGO_LOG(WARNING) << fmt::format("[sdk.txn.{}] batchget fail, key({}) retry({}) status({}).", ID(),
-                                      StringToHex(keys[0]), retry, status.ToString());
-  }
+  //   } else {
+  //     DINGO_LOG(WARNING) << fmt::format("[sdk.txn.{}] batchget fail, key({}) retry({}) status({}).", ID(),
+  //                                       StringToHex(keys[0]), retry, status.ToString());
+  //   }
 
-  return status;
+  //   return status;
+  TxnBatchGetTask task(stub_, keys, kvs, shared_from_this());
+  return task.Run();
 }
 
 Status Transaction::TxnImpl::ProcessScanState(ScanState& scan_state, uint64_t limit, std::vector<KVPair>& out_kvs) {
@@ -741,11 +748,6 @@ void Transaction::TxnImpl::DoTaskForPreCommit(TxnTask& task) {
 
 // TODO: process AlreadyExist if mutaion is PutIfAbsent
 Status Transaction::TxnImpl::DoPreCommit() {
-  struct RegionEntry {
-    RegionPtr region;
-    std::vector<const TxnMutation*> mutations;
-  };
-
   state_ = kPreCommitting;
 
   if (buffer_->IsEmpty()) {
@@ -753,125 +755,145 @@ Status Transaction::TxnImpl::DoPreCommit() {
     return Status::OK();
   }
 
-  std::string pk = buffer_->GetPrimaryKey();
+  //   struct RegionEntry {
+  //     RegionPtr region;
+  //     std::vector<const TxnMutation*> mutations;
+  //   };
 
-  // pre commit primary and ordinary key
-  // group mutations by region
-  std::set<const TxnMutation*> done_mutations;
-  std::unordered_map<int64_t, RegionEntry> region_entry_map;
-  auto gen_region_entry_func = [&]() -> Status {
-    region_entry_map.clear();
-    for (const auto& [key, mutation] : buffer_->Mutations()) {
-      if (done_mutations.count(&mutation) > 0) {
-        continue;
-      }
+  //   std::string pk = buffer_->GetPrimaryKey();
 
-      RegionPtr region;
-      Status status = LookupRegion(key, region);
-      if (!status.IsOK()) {
-        return status;
-      }
+  //   // pre commit primary and ordinary key
+  //   // group mutations by region
+  //   std::set<const TxnMutation*> done_mutations;
+  //   std::unordered_map<int64_t, RegionEntry> region_entry_map;
+  //   auto gen_region_entry_func = [&]() -> Status {
+  //     region_entry_map.clear();
+  //     for (const auto& [key, mutation] : buffer_->Mutations()) {
+  //       if (done_mutations.count(&mutation) > 0) {
+  //         continue;
+  //       }
 
-      auto iter = region_entry_map.find(region->RegionId());
-      if (iter == region_entry_map.end()) {
-        region_entry_map.emplace(std::make_pair(region->RegionId(), RegionEntry{region, {&mutation}}));
-      } else {
-        if (pk != key) {
-          iter->second.mutations.push_back(&mutation);
+  //       RegionPtr region;
+  //       Status status = LookupRegion(key, region);
+  //       if (!status.IsOK()) {
+  //         return status;
+  //       }
 
-        } else {
-          // primary key should be first
-          const auto* front = iter->second.mutations.front();
-          iter->second.mutations[0] = &mutation;
-          iter->second.mutations.push_back(front);
-        }
-      }
-    }
+  //       auto iter = region_entry_map.find(region->RegionId());
+  //       if (iter == region_entry_map.end()) {
+  //         region_entry_map.emplace(std::make_pair(region->RegionId(), RegionEntry{region, {&mutation}}));
+  //       } else {
+  //         if (pk != key) {
+  //           iter->second.mutations.push_back(&mutation);
 
-    return Status::OK();
-  };
+  //         } else {
+  //           // primary key should be first
+  //           const auto* front = iter->second.mutations.front();
+  //           iter->second.mutations[0] = &mutation;
+  //           iter->second.mutations.push_back(front);
+  //         }
+  //       }
+  //     }
 
-  Status status;
-  int retry = 0;
-  bool already_set_one_pc = false;
-  do {
-    status = gen_region_entry_func();
-    if (!status.IsOK()) {
-      break;
-    }
+  //     return Status::OK();
+  //   };
 
-    CHECK(!region_entry_map.empty()) << "region_entry_map is empty.";
+  //   Status status;
+  //   int retry = 0;
+  //   bool already_set_one_pc = false;
+  //   do {
+  //     status = gen_region_entry_func();
+  //     if (!status.IsOK()) {
+  //       break;
+  //     }
 
-    std::vector<TxnTask> tasks;
-    tasks.reserve(region_entry_map.size());
-    for (const auto& [_, entry] : region_entry_map) {
-      auto region = entry.region;
+  //     CHECK(!region_entry_map.empty()) << "region_entry_map is empty.";
 
-      std::vector<const TxnMutation*> mutations;
-      for (const auto* mutation : entry.mutations) {
-        mutations.push_back(mutation);
+  //     std::vector<TxnTask> tasks;
+  //     tasks.reserve(region_entry_map.size());
+  //     for (const auto& [_, entry] : region_entry_map) {
+  //       auto region = entry.region;
 
-        if (mutations.size() == FLAGS_txn_max_batch_count) {
-          tasks.emplace_back(mutations, region);
-          mutations.clear();
-        }
-      }
+  //       std::vector<const TxnMutation*> mutations;
+  //       for (const auto* mutation : entry.mutations) {
+  //         mutations.push_back(mutation);
 
-      if (!mutations.empty()) {
-        tasks.emplace_back(mutations, region);
-      }
-    }
+  //         if (mutations.size() == FLAGS_txn_max_batch_count) {
+  //           tasks.emplace_back(mutations, region);
+  //           mutations.clear();
+  //         }
+  //       }
 
-    // set one pc flag
-    if (!already_set_one_pc) {
-      is_one_pc_ = (tasks.size() == 1);
-      already_set_one_pc = true;
-    }
+  //       if (!mutations.empty()) {
+  //         tasks.emplace_back(mutations, region);
+  //       }
+  //     }
 
-    if (is_one_pc_) {
-      DoTaskForPreCommit(tasks.front());
+  //     // set one pc flag
+  //     if (!already_set_one_pc) {
+  //       is_one_pc_ = (tasks.size() == 1);
+  //       already_set_one_pc = true;
+  //     }
 
-    } else {
-      // parallel execute sub task
-      ParallelExecutor::Execute(tasks.size(),
-                                [&tasks, this](uint32_t i) { Transaction::TxnImpl::DoTaskForPreCommit(tasks[i]); });
-    }
+  //     if (is_one_pc_) {
+  //       DoTaskForPreCommit(tasks.front());
 
-    bool need_retry = false;
-    for (auto& task : tasks) {
-      if (task.status.IsOK()) {
-        for (const auto& mutation : task.mutations) {
-          done_mutations.insert(mutation);
-        }
-        continue;
-      }
+  //     } else {
+  //       // parallel execute sub task
+  //       ParallelExecutor::Execute(tasks.size(),
+  //                                 [&tasks, this](uint32_t i) { Transaction::TxnImpl::DoTaskForPreCommit(tasks[i]);
+  //                                 });
+  //     }
 
-      if (status.ok()) status = task.status;
+  //     bool need_retry = false;
+  //     for (auto& task : tasks) {
+  //       if (task.status.IsOK()) {
+  //         for (const auto& mutation : task.mutations) {
+  //           done_mutations.insert(mutation);
+  //         }
+  //         continue;
+  //       }
 
-      if (task.status.IsIncomplete() && task.status.Errno() == pb::error::EREGION_VERSION) {
-        need_retry = true;
-      } else {
-        need_retry = false;
-        status = task.status;
-        break;
-      }
-    }
+  //       if (status.ok()) status = task.status;
 
-    if (need_retry) continue;
+  //       if (task.status.IsIncomplete() && task.status.Errno() == pb::error::EREGION_VERSION) {
+  //         need_retry = true;
+  //       } else {
+  //         need_retry = false;
+  //         status = task.status;
+  //         break;
+  //       }
+  //     }
 
-    break;
+  //     if (need_retry) continue;
 
-  } while (IsNeedRetry(retry));
+  //     break;
 
-  if (!status.ok()) {
-    DINGO_LOG(WARNING) << fmt::format("[sdk.txn.{}] precommit key fail, retry({}) status({}).", ID(), retry,
-                                      status.ToString());
-    return status;
+  //   } while (IsNeedRetry(retry));
+
+  //   if (!status.ok()) {
+  //     DINGO_LOG(WARNING) << fmt::format("[sdk.txn.{}] precommit key fail, retry({}) status({}).", ID(), retry,
+  //                                       status.ToString());
+  //     return status;
+  //   }
+  // state_ = is_one_pc_ ? kCommitted : kPreCommitted;
+  //  return Status::OK();
+
+  std::map<std::string, const TxnMutation*> mutations_map;
+
+  for (const auto& [key, mutation] : buffer_->Mutations()) {
+    CHECK(mutations_map.count(key) == 0);
+    mutations_map.emplace(std::make_pair(key, &mutation));
   }
 
-  state_ = is_one_pc_ ? kCommitted : kPreCommitted;
+  TxnPrewriteTask task(stub_, buffer_->GetPrimaryKey(), mutations_map, shared_from_this(), is_one_pc_);
+  Status s = task.Run();
 
-  return Status::OK();
+  if (s.ok()) {
+    state_ = is_one_pc_ ? kCommitted : kPreCommitted;
+  }
+
+  return s;
 }
 
 std::unique_ptr<TxnCommitRpc> Transaction::TxnImpl::GenCommitRpc(const RegionPtr& region) const {
@@ -886,7 +908,7 @@ std::unique_ptr<TxnCommitRpc> Transaction::TxnImpl::GenCommitRpc(const RegionPtr
 }
 
 Status Transaction::TxnImpl::ProcessTxnCommitResponse(const TxnCommitResponse* response, bool is_primary) {
-  DINGO_LOG(DEBUG) << fmt::format("[sdk.txn.{}] commit response, pk({}) response({}).", ID(),
+  DINGO_LOG(DEBUG) << fmt::format("[sdk.txn.{}] commit response, pk({}) response({}).", ID(), buffer_->GetPrimaryKey(),
                                   response->ShortDebugString());
 
   std::string pk = buffer_->GetPrimaryKey();
@@ -1084,170 +1106,195 @@ Status Transaction::TxnImpl::DoCommit() {
   return Status::OK();
 }
 
-std::unique_ptr<TxnBatchRollbackRpc> Transaction::TxnImpl::GenBatchRollbackRpc(const RegionPtr& region) const {
-  auto rpc = std::make_unique<TxnBatchRollbackRpc>();
-  FillRpcContext(*rpc->MutableRequest()->mutable_context(), region->RegionId(), region->Epoch(),
-                 ToIsolationLevel(options_.isolation));
-  rpc->MutableRequest()->set_start_ts(start_ts_);
-  return std::move(rpc);
-}
+// std::unique_ptr<TxnBatchRollbackRpc> Transaction::TxnImpl::GenBatchRollbackRpc(const RegionPtr& region) const {
+//   auto rpc = std::make_unique<TxnBatchRollbackRpc>();
+//   FillRpcContext(*rpc->MutableRequest()->mutable_context(), region->RegionId(), region->Epoch(),
+//                  ToIsolationLevel(options_.isolation));
+//   rpc->MutableRequest()->set_start_ts(start_ts_);
+//   return std::move(rpc);
+// }
 
-void Transaction::TxnImpl::CheckTxnBatchRollbackResponse(const TxnBatchRollbackResponse* response) const {
-  if (response->has_txn_result()) {
-    std::string pk = buffer_->GetPrimaryKey();
-    const auto& txn_result = response->txn_result();
-    DINGO_LOG(WARNING) << fmt::format("[sdk.txn.{}] rollback fail, pk({}) txn_result({}).", ID(), StringToHex(pk),
-                                      txn_result.ShortDebugString());
-  }
-}
+// void Transaction::TxnImpl::CheckTxnBatchRollbackResponse(const TxnBatchRollbackResponse* response) const {
+//   if (response->has_txn_result()) {
+//     std::string pk = buffer_->GetPrimaryKey();
+//     const auto& txn_result = response->txn_result();
+//     DINGO_LOG(WARNING) << fmt::format("[sdk.txn.{}] rollback fail, pk({}) txn_result({}).", ID(), StringToHex(pk),
+//                                       txn_result.ShortDebugString());
+//   }
+// }
 
 Status Transaction::TxnImpl::RollbackPrimaryKey() {
+  //   std::string pk = buffer_->GetPrimaryKey();
+
+  //   Status status;
+  //   int retry = 0;
+  //   do {
+  //     RegionPtr region;
+  //     status = LookupRegion(pk, region);
+  //     if (!status.IsOK()) {
+  //       break;
+  //     }
+
+  //     auto rpc = GenBatchRollbackRpc(region);
+  //     *rpc->MutableRequest()->add_keys() = pk;
+  //     if (is_one_pc_) {
+  //       for (const auto& [key, _] : buffer_->Mutations()) {
+  //         if (key != pk) {
+  //           *rpc->MutableRequest()->add_keys() = key;
+  //         }
+  //       }
+  //     }
+
+  //     status = LogAndSendRpc(stub_, *rpc, region);
+  //     if (!status.IsOK()) {
+  //       if (status.IsIncomplete() && status.Errno() == pb::error::EREGION_VERSION) {
+  //         continue;
+  //       }
+  //       break;
+  //     }
+
+  //     const auto* response = rpc->Response();
+  //     CheckTxnBatchRollbackResponse(response);
+  //     if (response->has_txn_result()) {
+  //       // TODO: which state should we transfer to ?
+  //       const auto& txn_result = response->txn_result();
+  //       if (txn_result.has_locked()) {
+  //         return Status::TxnLockConflict(txn_result.locked().ShortDebugString());
+  //       }
+  //     }
+
+  //   } while (IsNeedRetry(retry));
+
+  //   if (!status.IsOK()) {
+  //     DINGO_LOG(WARNING) << fmt::format("[sdk.txn.{}] rollback primary key fail, pk({}) retry({}) status({}).", ID(),
+  //                                       StringToHex(pk), retry, status.ToString());
+  //   }
+
+  //   return status;
+
+  std::vector<std::string> keys;
   std::string pk = buffer_->GetPrimaryKey();
-
-  Status status;
-  int retry = 0;
-  do {
-    RegionPtr region;
-    status = LookupRegion(pk, region);
-    if (!status.IsOK()) {
-      break;
-    }
-
-    auto rpc = GenBatchRollbackRpc(region);
-    *rpc->MutableRequest()->add_keys() = pk;
-    if (is_one_pc_) {
-      for (const auto& [key, _] : buffer_->Mutations()) {
-        if (key != pk) {
-          *rpc->MutableRequest()->add_keys() = key;
-        }
+  keys.push_back(pk);
+  if (is_one_pc_) {
+    for (const auto& [key, _] : buffer_->Mutations()) {
+      if (key != pk) {
+        keys.push_back(key);
       }
     }
-
-    status = LogAndSendRpc(stub_, *rpc, region);
-    if (!status.IsOK()) {
-      if (status.IsIncomplete() && status.Errno() == pb::error::EREGION_VERSION) {
-        continue;
-      }
-      break;
-    }
-
-    const auto* response = rpc->Response();
-    CheckTxnBatchRollbackResponse(response);
-    if (response->has_txn_result()) {
-      // TODO: which state should we transfer to ?
-      const auto& txn_result = response->txn_result();
-      if (txn_result.has_locked()) {
-        return Status::TxnLockConflict(txn_result.locked().ShortDebugString());
-      }
-    }
-
-  } while (IsNeedRetry(retry));
-
-  if (!status.IsOK()) {
-    DINGO_LOG(WARNING) << fmt::format("[sdk.txn.{}] rollback primary key fail, pk({}) retry({}) status({}).", ID(),
-                                      StringToHex(pk), retry, status.ToString());
   }
-
-  return status;
+  TxnBatchRollbackTask task(stub_, keys, shared_from_this(), is_one_pc_);
+  return task.Run();
 }
 
-void Transaction::TxnImpl::DoTaskForRollback(TxnTask& task) {
-  auto rpc = GenBatchRollbackRpc(task.region);
-  for (const auto& key : task.keys) {
-    *rpc->MutableRequest()->add_keys() = key;
-  }
+// void Transaction::TxnImpl::DoTaskForRollback(TxnTask& task) {
+//   auto rpc = GenBatchRollbackRpc(task.region);
+//   for (const auto& key : task.keys) {
+//     *rpc->MutableRequest()->add_keys() = key;
+//   }
 
-  auto status = LogAndSendRpc(stub_, *rpc, task.region);
-  if (!status.ok()) {
-    task.status = status;
-    return;
-  }
+//   auto status = LogAndSendRpc(stub_, *rpc, task.region);
+//   if (!status.ok()) {
+//     task.status = status;
+//     return;
+//   }
 
-  const auto* response = rpc->Response();
-  CheckTxnBatchRollbackResponse(response);
-  if (response->has_txn_result() && response->txn_result().has_locked()) {
-    task.status = Status::TxnLockConflict("");
-  }
-}
+//   const auto* response = rpc->Response();
+//   CheckTxnBatchRollbackResponse(response);
+//   if (response->has_txn_result() && response->txn_result().has_locked()) {
+//     task.status = Status::TxnLockConflict("");
+//   }
+// }
 
 Status Transaction::TxnImpl::RollbackOrdinaryKey() {
-  struct RegionEntry {
-    RegionPtr region;
-    std::vector<std::string_view> keys;
-  };
+  //   struct RegionEntry {
+  //     RegionPtr region;
+  //     std::vector<std::string_view> keys;
+  //   };
+
+  //   std::string pk = buffer_->GetPrimaryKey();
+
+  //   std::set<std::string_view> done_keys;
+  //   // region id -> region entry
+  //   std::unordered_map<int64_t, RegionEntry> region_entry_map;
+  //   auto gen_region_entry_func = [&]() {
+  //     region_entry_map.clear();
+  //     for (const auto& [key, mutaion] : buffer_->Mutations()) {
+  //       if (key == pk || done_keys.count(key) > 0) {
+  //         continue;
+  //       }
+
+  //       RegionPtr region;
+  //       Status status = LookupRegion(key, region);
+  //       if (!status.IsOK()) {
+  //         continue;
+  //       }
+
+  //       auto iter = region_entry_map.find(region->RegionId());
+  //       if (iter == region_entry_map.end()) {
+  //         region_entry_map.emplace(std::make_pair(region->RegionId(), RegionEntry{region, {key}}));
+  //       } else {
+  //         iter->second.keys.push_back(key);
+  //       }
+  //     }
+  //   };
+
+  //   Status status;
+  //   int retry = 0;
+  //   do {
+  //     gen_region_entry_func();
+
+  //     if (region_entry_map.empty()) break;
+
+  //     std::vector<TxnTask> tasks;
+  //     tasks.reserve(region_entry_map.size());
+  //     for (const auto& [_, entry] : region_entry_map) {
+  //       tasks.emplace_back(entry.keys, entry.region);
+  //     }
+
+  //     // parallel execute sub task
+  //     ParallelExecutor::Execute(tasks.size(),
+  //                               [&tasks, this](uint32_t i) { Transaction::TxnImpl::DoTaskForRollback(tasks[i]); });
+
+  //     bool need_retry = false;
+  //     for (auto& task : tasks) {
+  //       if (task.status.IsOK()) {
+  //         for (const auto& key : task.keys) done_keys.insert(key);
+  //         continue;
+  //       }
+
+  //       DINGO_LOG(INFO) << fmt::format("[sdk.txn.{}] rollback ordinary key fail, region({}) status({}).", ID(),
+  //                                      task.region->RegionId(), task.status.ToString());
+
+  //       if (status.ok()) status = task.status;
+
+  //       if (task.status.IsIncomplete() && task.status.Errno() == pb::error::EREGION_VERSION) {
+  //         need_retry = true;
+  //       } else {
+  //         need_retry = false;
+  //         status = task.status;
+  //         break;
+  //       }
+  //     }
+
+  //     if (need_retry) continue;
+
+  //     break;
+
+  //   } while (IsNeedRetry(retry));
+
+  //   return status;
 
   std::string pk = buffer_->GetPrimaryKey();
 
-  std::set<std::string_view> done_keys;
-  // region id -> region entry
-  std::unordered_map<int64_t, RegionEntry> region_entry_map;
-  auto gen_region_entry_func = [&]() {
-    region_entry_map.clear();
-    for (const auto& [key, mutaion] : buffer_->Mutations()) {
-      if (key == pk || done_keys.count(key) > 0) {
-        continue;
-      }
-
-      RegionPtr region;
-      Status status = LookupRegion(key, region);
-      if (!status.IsOK()) {
-        continue;
-      }
-
-      auto iter = region_entry_map.find(region->RegionId());
-      if (iter == region_entry_map.end()) {
-        region_entry_map.emplace(std::make_pair(region->RegionId(), RegionEntry{region, {key}}));
-      } else {
-        iter->second.keys.push_back(key);
-      }
+  std::vector<std::string> keys;
+  for (const auto& [key, mutaion] : buffer_->Mutations()) {
+    if (key == pk) {
+      continue;
     }
-  };
-
-  Status status;
-  int retry = 0;
-  do {
-    gen_region_entry_func();
-
-    if (region_entry_map.empty()) break;
-
-    std::vector<TxnTask> tasks;
-    tasks.reserve(region_entry_map.size());
-    for (const auto& [_, entry] : region_entry_map) {
-      tasks.emplace_back(entry.keys, entry.region);
-    }
-
-    // parallel execute sub task
-    ParallelExecutor::Execute(tasks.size(),
-                              [&tasks, this](uint32_t i) { Transaction::TxnImpl::DoTaskForRollback(tasks[i]); });
-
-    bool need_retry = false;
-    for (auto& task : tasks) {
-      if (task.status.IsOK()) {
-        for (const auto& key : task.keys) done_keys.insert(key);
-        continue;
-      }
-
-      DINGO_LOG(INFO) << fmt::format("[sdk.txn.{}] rollback ordinary key fail, region({}) status({}).", ID(),
-                                     task.region->RegionId(), task.status.ToString());
-
-      if (status.ok()) status = task.status;
-
-      if (task.status.IsIncomplete() && task.status.Errno() == pb::error::EREGION_VERSION) {
-        need_retry = true;
-      } else {
-        need_retry = false;
-        status = task.status;
-        break;
-      }
-    }
-
-    if (need_retry) continue;
-
-    break;
-
-  } while (IsNeedRetry(retry));
-
-  return status;
+    keys.push_back(key);
+  }
+  TxnBatchRollbackTask task(stub_, keys, shared_from_this());
+  return task.Run();
 }
 
 Status Transaction::TxnImpl::DoRollback() {

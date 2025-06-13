@@ -135,7 +135,8 @@ class Client {
 
   Status GetRegionMap(int64_t tenant_id, std::vector<RegionPB>& regions);
 
-  Status GetStoreMap(const std::vector<StoreType>& store_types, std::vector<StorePB>& stores);
+  Status GetStoreMap(const std::vector<StoreType>& store_types,
+                                 std::vector<StorePB>& stores);
 
   Status TransferLeaderRegion(int64_t region_id, int64_t leader_store_id, bool is_force);
 
@@ -266,16 +267,16 @@ class Transaction {
 
   bool IsOnePc() const;
 
+  // own
+  class TxnImpl;
+  using TxnImplSPtr = std::shared_ptr<TxnImpl>;
+
  private:
   friend class Client;
   friend class TestBase;
   friend class SDKTxnImplTest;
 
   Status Begin();
-
-  // own
-  class TxnImpl;
-  using TxnImplSPtr = std::shared_ptr<TxnImpl>;
 
   TxnImplSPtr impl_;
 

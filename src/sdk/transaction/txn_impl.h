@@ -112,7 +112,12 @@ class Transaction::TxnImpl : public std::enable_shared_from_this<TxnImpl> {
 
   Status Rollback();
 
+  void CheckTxnBatchRollbackResponse(const TxnBatchRollbackResponse* response) const;
+
   bool IsOnePc() const { return is_one_pc_; }
+
+  int64_t GetStartTs() const { return start_ts_; }
+  TransactionOptions GetOptions() const { return options_; }
 
   bool TEST_IsInitState() { return state_ == kInit; }                    // NOLINT
   bool TEST_IsActiveState() { return state_ == kActive; }                // NOLINT
@@ -168,7 +173,7 @@ class Transaction::TxnImpl : public std::enable_shared_from_this<TxnImpl> {
   Status DoTxnGet(const std::string& key, std::string& value);
 
   // txn batch get
-  void DoTaskForBatchGet(TxnTask& task);
+  //   void DoTaskForBatchGet(TxnTask& task);
   Status DoTxnBatchGet(const std::vector<std::string>& keys, std::vector<KVPair>& kvs);
 
   // txn scan
@@ -190,8 +195,7 @@ class Transaction::TxnImpl : public std::enable_shared_from_this<TxnImpl> {
   Status DoCommit();
 
   // txn rollback
-  std::unique_ptr<TxnBatchRollbackRpc> GenBatchRollbackRpc(const RegionPtr& region) const;
-  void CheckTxnBatchRollbackResponse(const TxnBatchRollbackResponse* response) const;
+  //   std::unique_ptr<TxnBatchRollbackRpc> GenBatchRollbackRpc(const RegionPtr& region) const;
   void DoTaskForRollback(TxnTask& task);
   Status RollbackPrimaryKey();
   Status RollbackOrdinaryKey();
