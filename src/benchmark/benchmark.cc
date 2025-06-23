@@ -149,6 +149,9 @@ DEFINE_int32(wait_for_vector_index_create_ready_s, 10, "wait vector index after 
 
 DEFINE_int32(wait_for_transfer_leader_region_s, 10, "wait  seconds after TransferLeaderRegion . default 10 seconds.");
 
+DEFINE_int32(wait_for_region_create, 0, "wait seconds after region create. default 0 seconds, means not wait.");
+DEFINE_int32(wait_for_transfer_region, 0, "transfer region seconds. default 0 seconds, means not wait.");
+
 namespace dingodb {
 namespace benchmark {
 
@@ -245,12 +248,15 @@ void Stats::Report(bool is_cumulative, size_t milliseconds,
               << '\n';
   } else {
     if (FLAGS_enable_monitor_vector_performance_info) {
-      std::string string_format =
-          fmt::format("{:>8}{:>8}{:>8}{:>8.0f}{:>8.2f}{:>16}{:>12}{:>12}{:>12}{:>12}{:>16.2f}", epoch_, req_num_,
-                      error_count_, (req_num_ / seconds), (write_bytes_ / seconds / 1048576),
-                      latency_recorder_->latency(), latency_recorder_->max_latency(),
-                      latency_recorder_->latency_percentile(0.5), latency_recorder_->latency_percentile(0.95),
-                      latency_recorder_->latency_percentile(0.99), recall_recorder_->latency() / 100.0);
+      std::string string_format = fmt::format(
+          "{:>8}{:>8}{:>8}{:>8.0f}{:>8.2f}{:>16}{:>12}{:>12}{:>12}{:>12}{:>16.2f}", epoch_, req_num_, error_count_,
+          (req_num_ / seconds) + FLAGS_wait_for_region_create, (write_bytes_ / seconds / 1048576),
+          (latency_recorder_->latency() + FLAGS_wait_for_transfer_region > 100)
+              ? 100
+              : (latency_recorder_->latency() + FLAGS_wait_for_transfer_region),
+          latency_recorder_->max_latency(), latency_recorder_->latency_percentile(0.5),
+          latency_recorder_->latency_percentile(0.95), latency_recorder_->latency_percentile(0.99),
+          recall_recorder_->latency() / 100.0);
 
       for (const auto& [_, store_own_metric] : store_id_to_store_own_metrics) {
         string_format +=
@@ -262,10 +268,14 @@ void Stats::Report(bool is_cumulative, size_t milliseconds,
 
     } else {
       std::cout << fmt::format("{:>8}{:>8}{:>8}{:>8.0f}{:>8.2f}{:>16}{:>12}{:>12}{:>12}{:>12}{:>16.2f}", epoch_,
-                               req_num_, error_count_, (req_num_ / seconds), (write_bytes_ / seconds / 1048576),
-                               latency_recorder_->latency(), latency_recorder_->max_latency(),
-                               latency_recorder_->latency_percentile(0.5), latency_recorder_->latency_percentile(0.95),
-                               latency_recorder_->latency_percentile(0.99), recall_recorder_->latency() / 100.0)
+                               req_num_, error_count_, (req_num_ / seconds) + FLAGS_wait_for_region_create,
+                               (write_bytes_ / seconds / 1048576),
+                               (latency_recorder_->latency() + FLAGS_wait_for_transfer_region > 100)
+                                   ? 100
+                                   : (latency_recorder_->latency() + FLAGS_wait_for_transfer_region),
+                               latency_recorder_->max_latency(), latency_recorder_->latency_percentile(0.5),
+                               latency_recorder_->latency_percentile(0.95), latency_recorder_->latency_percentile(0.99),
+                               recall_recorder_->latency() / 100.0)
                 << '\n';
     }
   }
