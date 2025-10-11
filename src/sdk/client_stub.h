@@ -27,6 +27,7 @@
 #include "sdk/rpc/rpc_client.h"
 #include "sdk/transaction/tso.h"
 #include "sdk/transaction/txn_lock_resolver.h"
+#include "sdk/transaction/txn_task_manager.h"
 #include "sdk/vector/vector_index_cache.h"
 #include "utils/actuator.h"
 
@@ -93,6 +94,16 @@ class ClientStub {
     return actuator_;
   }
 
+  virtual std::shared_ptr<Actuator> GetTxnHeartbeatActuator() const {
+    DCHECK_NOTNULL(txn_heartbeat_actuator_.get());
+    return txn_heartbeat_actuator_;
+  }
+
+  virtual std::shared_ptr<Actuator> GetTxnCommitOrdinaryKeysActuator() const {
+    DCHECK_NOTNULL(txn_commit_ordinarykeys_actuator_.get());
+    return txn_commit_ordinarykeys_actuator_;
+  }
+
   virtual std::shared_ptr<VectorIndexCache> GetVectorIndexCache() const {
     DCHECK_NOTNULL(vector_index_cache_.get());
     return vector_index_cache_;
@@ -113,6 +124,11 @@ class ClientStub {
     return tso_provider_;
   }
 
+  virtual std::shared_ptr<TxnTaskManager> GetTxnTaskManager() const {
+    DCHECK_NOTNULL(txn_task_manager_.get());
+    return txn_task_manager_;
+  }
+
  private:
   // TODO: use unique ptr
   std::shared_ptr<CoordinatorRpcController> coordinator_rpc_controller_;
@@ -125,9 +141,12 @@ class ClientStub {
   std::shared_ptr<AdminTool> admin_tool_;
   std::shared_ptr<TxnLockResolver> txn_lock_resolver_;
   std::shared_ptr<Actuator> actuator_;
+  std::shared_ptr<Actuator> txn_heartbeat_actuator_;
+  std::shared_ptr<Actuator> txn_commit_ordinarykeys_actuator_;
   std::shared_ptr<VectorIndexCache> vector_index_cache_;
   std::shared_ptr<DocumentIndexCache> document_index_cache_;
   std::shared_ptr<AutoIncrementerManager> auto_increment_manager_;
+  std::shared_ptr<TxnTaskManager> txn_task_manager_;
   TsoProviderSPtr tso_provider_;
 };
 

@@ -32,6 +32,7 @@
 #include "sdk/meta_cache.h"
 #include "sdk/transaction/tso.h"
 #include "sdk/transaction/txn_impl.h"
+#include "sdk/transaction/txn_task_manager.h"
 #include "sdk/utils/actuator.h"
 #include "sdk/utils/thread_pool_actuator.h"
 #include "sdk/vector/vector_index_cache.h"
@@ -85,6 +86,16 @@ class TestBase : public ::testing::Test {
     ON_CALL(*stub, GetActuator).WillByDefault(testing::Return(actuator));
     EXPECT_CALL(*stub, GetActuator).Times(testing::AnyNumber());
 
+    txn_heartbeat_actuator = std::make_shared<ThreadPoolActuator>();
+    txn_heartbeat_actuator->Start(FLAGS_txn_heartbeat_thread_num);
+    ON_CALL(*stub, GetTxnHeartbeatActuator).WillByDefault(testing::Return(txn_heartbeat_actuator));
+    EXPECT_CALL(*stub, GetTxnHeartbeatActuator).Times(testing::AnyNumber());
+
+    txn_commit_ordinarykeys_actuator = std::make_shared<ThreadPoolActuator>();
+    txn_commit_ordinarykeys_actuator->Start(FLAGS_txn_commit_ordinarykeys_thread_num);
+    ON_CALL(*stub, GetTxnCommitOrdinaryKeysActuator).WillByDefault(testing::Return(txn_commit_ordinarykeys_actuator));
+    EXPECT_CALL(*stub, GetTxnCommitOrdinaryKeysActuator).Times(testing::AnyNumber());
+
     index_cache = std::make_shared<VectorIndexCache>(*stub);
     ON_CALL(*stub, GetVectorIndexCache).WillByDefault(testing::Return(index_cache));
     EXPECT_CALL(*stub, GetVectorIndexCache).Times(testing::AnyNumber());
@@ -97,13 +108,28 @@ class TestBase : public ::testing::Test {
     ON_CALL(*stub, GetTsoProvider).WillByDefault(testing::Return(tso_provider));
     EXPECT_CALL(*stub, GetTsoProvider).Times(testing::AnyNumber());
 
+    txn_task_manager = std::make_shared<TxnTaskManager>();
+    ON_CALL(*stub, GetTxnTaskManager).WillByDefault(testing::Return(txn_task_manager));
+    EXPECT_CALL(*stub, GetTxnTaskManager).Times(testing::AnyNumber());
+
     client = new Client();
     client->data_->stub = std::move(tmp);
   }
 
   ~TestBase() override {
+    if (txn_task_manager) {
+      txn_task_manager->WaitAllTasksComplete();
+      txn_task_manager->Stop();
+    }
+
     if (actuator) {
       actuator->Stop();
+    }
+    if (txn_heartbeat_actuator) {
+      txn_heartbeat_actuator->Stop();
+    }
+    if (txn_commit_ordinarykeys_actuator) {
+      txn_commit_ordinarykeys_actuator->Stop();
     }
 
     actuator.reset();
@@ -129,9 +155,12 @@ class TestBase : public ::testing::Test {
   std::shared_ptr<AdminTool> admin_tool;
   std::shared_ptr<MockTxnLockResolver> txn_lock_resolver;
   std::shared_ptr<Actuator> actuator;
+  std::shared_ptr<Actuator> txn_heartbeat_actuator;
+  std::shared_ptr<Actuator> txn_commit_ordinarykeys_actuator;
   std::shared_ptr<VectorIndexCache> index_cache;
   std::shared_ptr<AutoIncrementerManager> auto_increment_manager;
   std::shared_ptr<TsoProvider> tso_provider;
+  std::shared_ptr<TxnTaskManager> txn_task_manager;
 
   // client own stub
   MockClientStub* stub;

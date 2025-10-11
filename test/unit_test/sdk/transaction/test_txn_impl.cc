@@ -15,6 +15,7 @@
 #include <unistd.h>
 
 #include <cstdint>
+#include <iostream>
 #include <memory>
 
 #include "dingosdk/client.h"
@@ -26,6 +27,7 @@
 #include "proto/store.pb.h"
 #include "sdk/common/common.h"
 #include "sdk/common/param_config.h"
+#include "sdk/rpc/brpc/store_rpc.h"
 #include "sdk/rpc/coordinator_rpc.h"
 #include "sdk/rpc/store_rpc.h"
 #include "sdk/transaction/txn_impl.h"
@@ -363,7 +365,7 @@ TEST_F(SDKTxnImplTest, CommitWithData) {
 
         cb();
       })
-      .WillRepeatedly([&](Rpc& rpc, std::function<void()> cb) {
+      .WillRepeatedly([&, txn](Rpc& rpc, std::function<void()> cb) {
         // precommit ordinary key
         TxnPrewriteRpc* txn_rpc = dynamic_cast<TxnPrewriteRpc*>(&rpc);
         if (nullptr == txn_rpc) {
@@ -568,7 +570,7 @@ TEST_F(SDKTxnImplTest, PrimaryKeyLockConflictExceed) {
 
   Status s = txn->PreCommit();
   EXPECT_TRUE(s.IsTxnLockConflict());
-  EXPECT_EQ(txn->TEST_IsPreCommittingState(), true);
+  EXPECT_EQ(txn->TEST_IsPreCommittFailState(), true);
 }
 
 TEST_F(SDKTxnImplTest, PrimaryKeyWriteLockConfict) {
@@ -615,7 +617,7 @@ TEST_F(SDKTxnImplTest, PrimaryKeyWriteLockConfict) {
 
   Status s = txn->PreCommit();
   EXPECT_TRUE(s.IsTxnWriteConflict());
-  EXPECT_EQ(txn->TEST_IsPreCommittingState(), true);
+  EXPECT_EQ(txn->TEST_IsPreCommittFailState(), true);
 }
 
 TEST_F(SDKTxnImplTest, PreWriteSecondLockConflict) {
@@ -681,7 +683,7 @@ TEST_F(SDKTxnImplTest, PreWriteSecondLockConflict) {
 
   Status s = txn->PreCommit();
   EXPECT_TRUE(s.IsTxnLockConflict());
-  EXPECT_EQ(txn->TEST_IsPreCommittingState(), true);
+  EXPECT_EQ(txn->TEST_IsPreCommittFailState(), true);
 }
 
 TEST_F(SDKTxnImplTest, PreWriteSecondWriteConflict) {
@@ -747,7 +749,7 @@ TEST_F(SDKTxnImplTest, PreWriteSecondWriteConflict) {
 
   Status s = txn->PreCommit();
   EXPECT_TRUE(s.IsTxnWriteConflict());
-  EXPECT_EQ(txn->TEST_IsPreCommittingState(), true);
+  EXPECT_EQ(txn->TEST_IsPreCommittFailState(), true);
 }
 
 TEST_F(SDKTxnImplTest, CommitPrimaryKeyMeetRollback) {
@@ -765,7 +767,7 @@ TEST_F(SDKTxnImplTest, CommitPrimaryKeyMeetRollback) {
     txn->PutIfAbsent("d", "d");
   }
 
-  EXPECT_CALL(*rpc_client, SendRpc).WillRepeatedly([&](Rpc& rpc, std::function<void()> cb) {
+  EXPECT_CALL(*rpc_client, SendRpc).WillRepeatedly([&, txn](Rpc& rpc, std::function<void()> cb) {
     TxnPrewriteRpc* txn_rpc = dynamic_cast<TxnPrewriteRpc*>(&rpc);
     if (nullptr != txn_rpc) {
       // precommit
@@ -824,7 +826,7 @@ TEST_F(SDKTxnImplTest, CommitSencondError) {
     txn->PutIfAbsent("d", "d");
   }
 
-  EXPECT_CALL(*rpc_client, SendRpc).WillRepeatedly([&](Rpc& rpc, std::function<void()> cb) {
+  EXPECT_CALL(*rpc_client, SendRpc).WillRepeatedly([&, txn](Rpc& rpc, std::function<void()> cb) {
     TxnPrewriteRpc* txn_rpc = dynamic_cast<TxnPrewriteRpc*>(&rpc);
     if (nullptr != txn_rpc) {
       // precommit
@@ -919,7 +921,7 @@ TEST_F(SDKTxnImplTest, PreCommitFailThenRollback) {
 
   Status s = txn->PreCommit();
   EXPECT_TRUE(s.IsTxnWriteConflict());
-  EXPECT_EQ(txn->TEST_IsPreCommittingState(), true);
+  EXPECT_EQ(txn->TEST_IsPreCommittFailState(), true);
 
   s = txn->Rollback();
   EXPECT_TRUE(s.ok());
@@ -991,7 +993,7 @@ TEST_F(SDKTxnImplTest, RollbackPrimaryKeyFail) {
 
   Status s = txn->PreCommit();
   EXPECT_TRUE(s.IsTxnWriteConflict());
-  EXPECT_EQ(txn->TEST_IsPreCommittingState(), true);
+  EXPECT_EQ(txn->TEST_IsPreCommittFailState(), true);
 
   s = txn->Rollback();
   EXPECT_TRUE(s.IsTxnLockConflict());
@@ -1066,14 +1068,14 @@ TEST_F(SDKTxnImplTest, RollbackSecondKeysFail) {
 
   Status s = txn->PreCommit();
   EXPECT_TRUE(s.IsTxnWriteConflict());
-  EXPECT_EQ(txn->TEST_IsPreCommittingState(), true);
+  EXPECT_EQ(txn->TEST_IsPreCommittFailState(), true);
 
   s = txn->Rollback();
   EXPECT_TRUE(s.ok());
   EXPECT_EQ(txn->TEST_IsRollbacktedState(), true);
 }
 
-TEST_F(SDKTxnImplTest, LockHeartbeat) {
+TEST_F(SDKTxnImplTest, LockHeartbeatOnce) {
   auto txn = NewTransactionImpl(options);
 
   EXPECT_EQ(txn->TEST_IsActiveState(), true);
@@ -1132,7 +1134,7 @@ TEST_F(SDKTxnImplTest, LockHeartbeat) {
 
         cb();
       })
-      .WillRepeatedly([&](Rpc& rpc, std::function<void()> cb) {
+      .WillOnce([&, txn](Rpc& rpc, std::function<void()> cb) {
         TxnHeartBeatRpc* txn_rpc = dynamic_cast<TxnHeartBeatRpc*>(&rpc);
         CHECK_NOTNULL(txn_rpc);
         const auto* request = txn_rpc->Request();
@@ -1144,12 +1146,31 @@ TEST_F(SDKTxnImplTest, LockHeartbeat) {
         response->set_lock_ttl(request->advise_lock_ttl());
 
         cb();
+      })
+      .WillOnce([&, txn](Rpc& rpc, std::function<void()> cb) {
+        TxnHeartBeatRpc* txn_rpc = dynamic_cast<TxnHeartBeatRpc*>(&rpc);
+        CHECK_NOTNULL(txn_rpc);
+        const auto* request = txn_rpc->Request();
+        EXPECT_TRUE(request->has_context());
+        EXPECT_EQ(request->start_ts(), txn->TEST_GetStartTs());
+        EXPECT_EQ(request->primary_lock(), txn->TEST_GetPrimaryKey());
+
+        auto* response = txn_rpc->MutableResponse();
+        response->set_lock_ttl(request->advise_lock_ttl());
+
+        cb();
+      })
+      .WillRepeatedly([&](Rpc& rpc, std::function<void()> cb) {
+        TxnCommitRpc* txn_rpc = dynamic_cast<TxnCommitRpc*>(&rpc);
+        cb();
       });
 
   Status s = txn->PreCommit();
   EXPECT_TRUE(s.ok());
 
   sleep(25);
+  s = txn->Commit();
+  EXPECT_TRUE(s.ok());
 }
 
 TEST_F(SDKTxnImplTest, LockHeartbeatFail) {
@@ -1208,7 +1229,7 @@ TEST_F(SDKTxnImplTest, LockHeartbeatFail) {
 
         cb();
       })
-      .WillOnce([&](Rpc& rpc, std::function<void()> cb) {
+      .WillOnce([&, txn](Rpc& rpc, std::function<void()> cb) {
         TxnHeartBeatRpc* txn_rpc = dynamic_cast<TxnHeartBeatRpc*>(&rpc);
         CHECK_NOTNULL(txn_rpc);
         const auto* request = txn_rpc->Request();

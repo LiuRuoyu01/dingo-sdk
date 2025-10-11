@@ -19,6 +19,8 @@
 
 // sdk config
 DEFINE_int64(actuator_thread_num, 8, "actuator thread num");
+DEFINE_int64(txn_heartbeat_thread_num, 8, "txn heartbeat actuator thread num");
+DEFINE_int64(txn_commit_ordinarykeys_thread_num, 8, "txn commit ordinary keys actuator thread num");
 
 // coordinator config
 DEFINE_int64(coordinator_interaction_delay_ms, 500, "coordinator interaction delay ms");

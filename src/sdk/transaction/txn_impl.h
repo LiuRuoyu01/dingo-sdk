@@ -30,6 +30,7 @@
 #include "sdk/region.h"
 #include "sdk/rpc/store_rpc.h"
 #include "sdk/transaction/txn_buffer.h"
+#include "sdk/transaction/txn_task_manager.h"
 
 namespace dingodb {
 namespace sdk {
@@ -60,6 +61,7 @@ class TxnImpl : public std::enable_shared_from_this<TxnImpl> {
     kRollbacked,
     kPreCommitting,
     kPreCommitted,
+    kPreCommittFail,
     kCommitting,
     kCommitted
   };
@@ -82,6 +84,8 @@ class TxnImpl : public std::enable_shared_from_this<TxnImpl> {
         return "COMMITTING";
       case kCommitted:
         return "COMMITTED";
+      case kPreCommittFail:
+        return "PRECOMMITFAIL";
       default:
         CHECK(false) << "unknow transaction state";
     }
@@ -129,13 +133,14 @@ class TxnImpl : public std::enable_shared_from_this<TxnImpl> {
   bool TEST_IsRollbackingState() { return state_ == kRollbacking; }      // NOLINT
   bool TEST_IsRollbacktedState() { return state_ == kRollbacked; }       // NOLINT
   bool TEST_IsPreCommittingState() { return state_ == kPreCommitting; }  // NOLINT
-  bool TEST_IsPreCommittedState() { return state_ == kPreCommitted; }    // NOLINT
-  bool TEST_IsCommittingState() { return state_ == kCommitting; }        // NOLINT
-  bool TEST_IsCommittedState() { return state_ == kCommitted; }          // NOLINT
-  int64_t TEST_GetStartTs() { return start_ts_; }                        // NOLINT
-  int64_t TEST_GetCommitTs() { return commit_ts_; }                      // NOLINT
-  int64_t TEST_MutationsSize() { return buffer_->MutationsSize(); }      // NOLINT
-  std::string TEST_GetPrimaryKey() { return buffer_->GetPrimaryKey(); }  // NOLINT
+  bool TEST_IsPreCommittedState() { return state_ == kPreCommitted; }  // NOLINT
+  bool TEST_IsPreCommittFailState() { return state_ == kPreCommittFail; }  // NOLINT
+  bool TEST_IsCommittingState() { return state_ == kCommitting; }          // NOLINT
+  bool TEST_IsCommittedState() { return state_ == kCommitted; }            // NOLINT
+  int64_t TEST_GetStartTs() { return start_ts_; }                          // NOLINT
+  int64_t TEST_GetCommitTs() { return commit_ts_; }                        // NOLINT
+  int64_t TEST_MutationsSize() { return buffer_->MutationsSize(); }        // NOLINT
+  std::string TEST_GetPrimaryKey() { return buffer_->GetPrimaryKey(); }    // NOLINT
 
  private:
   struct ScanState {

@@ -26,6 +26,8 @@
 // sdk config
 const int64_t kSdkVlogLevel = 60;
 DECLARE_int64(actuator_thread_num);
+DECLARE_int64(txn_heartbeat_thread_num);
+DECLARE_int64(txn_commit_ordinarykeys_thread_num);
 
 // coordinator config
 const int64_t kPrefetchRegionCount = 3;

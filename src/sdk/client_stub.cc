@@ -69,6 +69,12 @@ Status ClientStub::Open(const std::vector<EndPoint>& endpoints) {
   actuator_ = std::make_shared<ThreadPoolActuator>();
   actuator_->Start(FLAGS_actuator_thread_num);
 
+  txn_heartbeat_actuator_ = std::make_shared<ThreadPoolActuator>();
+  txn_heartbeat_actuator_->Start(FLAGS_txn_heartbeat_thread_num);
+
+  txn_commit_ordinarykeys_actuator_ = std::make_shared<ThreadPoolActuator>();
+  txn_commit_ordinarykeys_actuator_->Start(FLAGS_txn_commit_ordinarykeys_thread_num);
+
   vector_index_cache_ = std::make_shared<VectorIndexCache>(*this);
 
   document_index_cache_ = std::make_shared<DocumentIndexCache>(*this);
@@ -77,14 +83,25 @@ Status ClientStub::Open(const std::vector<EndPoint>& endpoints) {
 
   tso_provider_ = std::make_shared<TsoProvider>(*this);
 
+  txn_task_manager_ = std::make_shared<TxnTaskManager>();
+
   return Status::OK();
 }
 
 // ensure the task execution in the thread pool is completed first
 void ClientStub::Stop() {
+  if (txn_task_manager_) {
+    txn_task_manager_->WaitAllTasksComplete();
+    txn_task_manager_->Stop();
+  }
   if (actuator_) {
     actuator_->Stop();
-    actuator_.reset();
+  }
+  if (txn_heartbeat_actuator_) {
+    txn_heartbeat_actuator_->Stop();
+  }
+  if (txn_commit_ordinarykeys_actuator_) {
+    txn_commit_ordinarykeys_actuator_->Stop();
   }
 }
 

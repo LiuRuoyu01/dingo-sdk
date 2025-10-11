@@ -480,9 +480,20 @@ Status TxnImpl::TryResolveTxnPreCommitConflict(const TxnPrewriteResponse* respon
 }
 
 void TxnImpl::ScheduleHeartBeat() {
+  auto task_manager = stub_.GetTxnTaskManager();
+  if (!task_manager || task_manager->IsStopped()) {
+    DINGO_LOG(WARNING) << fmt::format("[sdk.txn.{}] heartbeat stoped , because task manager stopped.", ID());
+    return;
+  }
+  std::string task_name = task_manager->GenerateTaskName(start_ts_, "heartbeat");
+  task_manager->RegisterTask(task_name);
   stub_.GetActuator()->Schedule(
-      [shared_this = shared_from_this(), start_ts = start_ts_, primary_key = buffer_->GetPrimaryKey()] {
-        shared_this->DoHeartBeat(start_ts, primary_key);
+      [shared_this = shared_from_this(), task_manager = task_manager, start_ts = start_ts_,
+       primary_key = buffer_->GetPrimaryKey(), task_name] {
+        {
+          shared_this->DoHeartBeat(start_ts, primary_key);
+          task_manager->UnregisterTask(task_name);
+        }
       },
       FLAGS_txn_heartbeat_interval_ms);
 }
@@ -553,6 +564,7 @@ Status TxnImpl::DoPreCommit() {
 
     if (!status.ok()) {
       DINGO_LOG(WARNING) << fmt::format("[sdk.txn.{}] 1pc precommit key fail, status({}).", ID(), status.ToString());
+      state_.store(kPreCommittFail);
       return status;
     }
   } else {
@@ -571,6 +583,7 @@ Status TxnImpl::DoPreCommit() {
     if (!status.ok()) {
       DINGO_LOG(WARNING) << fmt::format("[sdk.txn.{}] 2pc precommit primary key fail, status({}).", ID(),
                                         status.ToString());
+      state_.store(kPreCommittFail);
       return status;
     }
 
@@ -592,6 +605,7 @@ Status TxnImpl::DoPreCommit() {
     if (!status.ok()) {
       DINGO_LOG(WARNING) << fmt::format("[sdk.txn.{}] 2pc precommit ordinary keys fail, status({}).", ID(),
                                         status.ToString());
+      state_.store(kPreCommittFail);
       return status;
     }
   }
@@ -655,9 +669,23 @@ Status TxnImpl::CommitOrdinaryKey() {
       keys.push_back(key);
     }
   }
+
+  auto task_manager = stub_.GetTxnTaskManager();
+  if (!task_manager || task_manager->IsStopped()) {
+    DINGO_LOG(WARNING) << fmt::format("[sdk.txn.{}] commit ordinary keys fail, task manager stopped.", ID());
+    return Status::OK();
+  }
+  std::string task_name = task_manager->GenerateTaskName(ID(), "commit_ordinary_keys");
+  task_manager->RegisterTask(task_name);
   // async commit ordinary keys
   stub_.GetActuator()->Schedule(
-      [shared_this = shared_from_this(), ordinary_keys = keys] { shared_this->DoCommitOrdinaryKey(ordinary_keys); }, 0);
+      [shared_this = shared_from_this(), task_manager = task_manager, ordinary_keys = keys, task_name = task_name] {
+        {
+          shared_this->DoCommitOrdinaryKey(ordinary_keys);
+          task_manager->UnregisterTask(task_name);
+        }
+      },
+      0);
   return Status::OK();
 }
 
@@ -667,8 +695,7 @@ void TxnImpl::DoCommitOrdinaryKey(std::vector<std::string> keys) {
       std::make_shared<TxnCommitTask>(stub_, keys, shared_from_this(), false);
   auto status = txn_commit_task->Run();
   if (!status.ok()) {
-    DINGO_LOG(WARNING) << fmt::format("[sdk.txn.{}] commit ordinary keys fail. status({}).", ID(),
-                                      status.ToString());
+    DINGO_LOG(WARNING) << fmt::format("[sdk.txn.{}] commit ordinary keys fail. status({}).", ID(), status.ToString());
   }
 }
 
@@ -757,7 +784,7 @@ Status TxnImpl::DoRollback() {
   // so we should check txn status first and then take action
   // TODO: maybe support rollback when txn is active
   State state = state_.load();
-  if (state != kRollbacking && state != kPreCommitting && state != kPreCommitted) {
+  if (state != kRollbacking && state != kPreCommitting && state != kPreCommitted && state != kPreCommittFail) {
     return Status::IllegalState(fmt::format("forbid rollback, state {}", StateName(state)));
   }
 
