@@ -64,14 +64,14 @@ class StoreRpcController {
 
   static bool IsUniversalNeedRetryError(const Status& status) {
     return status.IsNetworkError() || status.IsRemoteError() || status.IsNotLeader() || status.IsNoLeader() ||
-           status.IsRaftNotConsistentRead();
+           status.IsRaftNotConsistentRead() || status.IsRaftCommitLog();
   }
 
   static bool IsTxnNeedRetryError(const Status& status) { return status.IsTxnMemLockConflict(); }
 
   static bool NeedDelay(const Status& status) {
     return status.IsRemoteError() || status.IsNoLeader() || status.IsTxnMemLockConflict() || status.IsNetworkError() ||
-           status.IsNotLeader();
+           status.IsNotLeader() || status.IsRaftCommitLog();
   }
   // above funciton only works for store rpc controller
 
