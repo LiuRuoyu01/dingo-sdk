@@ -12,13 +12,31 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef DINGODB_SDK_THREAD_POOL_IMPL_H_
-#define DINGODB_SDK_THREAD_POOL_IMPL_H_
+#ifndef DINGODB_SDK_IRW_LOCK_H_
+#define DINGODB_SDK_IRW_LOCK_H_
 
-#ifdef USE_GRPC
-#include "sdk/utils/grpc/thread_pool_impl.h"
-#else
-#include "sdk/utils/brpc/thread_pool_impl.h"
-#endif  // USE_GRPC
+namespace dingodb {
+namespace sdk {
 
-#endif  // DINGODB_SDK_THREAD_POOL_IMPL_H_
+class IRWLock {
+ public:
+  IRWLock(const IRWLock&) = delete;
+  IRWLock& operator=(const IRWLock&) = delete;
+
+  virtual void WRLock() = 0;
+  virtual int TryWRLock() = 0;
+  virtual void UnWRLock() = 0;
+
+  virtual void RDLock() = 0;
+  virtual int TryRDLock() = 0;
+  virtual void UnRDLock() = 0;
+
+ protected:
+  IRWLock() = default;
+  virtual ~IRWLock() = default;
+};
+
+}  // namespace sdk
+}  // namespace dingodb
+
+#endif  // DINGODB_SDK_IRW_LOCK_H_

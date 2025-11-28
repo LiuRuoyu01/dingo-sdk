@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "sdk/utils/thread_pool_impl.h"
+#include "sdk/utils/grpc/thread_pool_impl.h"
 
 #include <cassert>
 #include <mutex>
